@@ -174,7 +174,7 @@ class StaticSiteContentSource extends ExternalContentSource {
 	 * Crawl the target site
 	 * @return StaticSiteCrawler
 	 */
-	public function crawl($limit=false, $verbose=false) {
+	public function crawl($limit=false, $verbose=true) {
 		if(!$this->BaseUrl) {
 			throw new LogicException("Can't crawl a site until Base URL is set.");
 		}
@@ -195,6 +195,7 @@ class StaticSiteContentSource extends ExternalContentSource {
 			$schemaMimeTypes = StaticSiteMimeProcessor::get_mimetypes_from_text($schema->MimeTypes);
 			array_push($schemaMimeTypes, StaticSiteUrlList::$undefined_mime_type);
 			if($schemaCanParseURL) {
+
 				if($mimeType && $schemaMimeTypes && (!in_array($mimeType, $schemaMimeTypes))) {
 					continue;
 				}
@@ -217,9 +218,10 @@ class StaticSiteContentSource extends ExternalContentSource {
 		if(!strlen($appliesTo)) {
 			$appliesTo = $schema::$default_applies_to;
 		}
+
 		// backslash the delimiters for the reg exp pattern
-		$appliesTo = str_replace('|', '\|', $appliesTo);
-		if(preg_match("|^$appliesTo|", $url) == 1) {
+		$appliesTo = str_replace('@', '\@', $appliesTo);
+		if(preg_match("@^$appliesTo@", $url) == 1) {
 			return true;
 		}
 		return false;
@@ -328,6 +330,7 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 
 	public static $has_many = array(
 		"ImportRules" => "StaticSiteContentSource_ImportRule",
+		"ImportProcessors" => "StaticSiteContentSource_ImportProcessor",
 	);
 
 	public function getTitle() {
@@ -370,6 +373,16 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 			$fields->addFieldToTab('Root.Main', $importRules);
 		}
 
+		$importProcessors = $fields->dataFieldByName('ImportProcessors');
+		$importProcessors->getConfig()->removeComponentsByType('GridFieldAddExistingAutocompleter');
+		$importProcessors->getConfig()->removeComponentsByType('GridFieldAddNewButton');
+		$addNewButton = new GridFieldAddNewButton('after');
+		$addNewButton->setButtonName("Add Processor");
+		$importProcessors->getConfig()->addComponent($addNewButton);
+		$fields->removeFieldFromTab('Root', 'ImportProcessors');
+		$fields->addFieldToTab('Root.Main', $importProcessors);
+
+
 		return $fields;
 	}
 
@@ -407,7 +420,9 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 				'selector' => $rule->CSSSelector,
 				'attribute' => $rule->Attribute,
 				'plaintext' => $rule->PlainText,
-				'excludeselectors' => preg_split('/\s+/', trim($rule->ExcludeCSSSelector)),
+				// We can just use a long CSS rule with commas in it.
+				//'excludeselectors' => preg_split('/\s+/', trim($rule->ExcludeCSSSelector)),
+				'excludeselectors' => explode(',', trim($rule->ExcludeCSSSelector)),
 				'outerhtml' => $rule->OuterHTML
 			);
 			$output[$rule->FieldName][] = $ruleArray;
@@ -448,6 +463,9 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 				$type = 'image';
 				break;
 			case stristr($dt,'file') !== false:
+				$type = 'file';
+				break;
+			case stristr($dt,'video') !== false:
 				$type = 'file';
 				break;
 			case stristr($dt,'page') !== false:
@@ -532,4 +550,60 @@ class StaticSiteContentSource_ImportRule extends DataObject {
 
 		return $fields;
 	}
+}
+
+
+/**
+ * Allows adding PHP processor functionality to an import
+ */
+class StaticSiteContentSource_ImportProcessor extends DataObject {
+
+	private static $db = array(
+		'Name' => 'Text',
+	);
+
+	private static $has_one = array(
+		"Schema" => "StaticSiteContentSource_ImportSchema",
+	);
+
+	public function getCMSFields() {
+		$fields = new FieldList();
+
+		$map = array();
+		foreach( ClassInfo::implementorsOf('StaticSiteContentSource_ImportProcess') as $class ) {
+			$map[$class] = $class;
+		}
+
+		$fields->push(
+			new DropdownField('Name', 'Select a processor to apply:', $map)
+		);		
+
+		return $fields;
+	}
+
+}
+
+/**
+ * The interface used to process an item.
+ * Processing is run after the import rules have completed.
+ * The $item has handy function getContentExtractor() which in turn has handy function getContent()
+ * which will return the content of the HTML page; 
+ */
+interface StaticSiteContentSource_ImportProcess {
+
+	// Inside your function, you can use eg:
+	// $elements = $item->getContentExtractor()->getPhpQuery()->find('.css-selector');
+	// // I find it easier to use for and eq() than foreach, as the elements remain phpQuery objects
+	// for ( $i = 0; $i < $elements->size(); $i++ ) {
+	//     $element = $elements->eq($i);
+	//     $content = $object->Content;
+	//     $content = phpQuery::newDocument('<div id="munged-content">'.$content.'</div>');
+	//     // Note that we already replaced all preceding ones, so it's always eq(0)
+	//     $content->find('#'.$element->attr('id'))->eq(0)->replaceWith("\n[shortcode id=".$element->attr('id')."]\n");
+	//     $object->Content = $content->find('#munged-content')->html();
+	// }
+	// $object->write();
+	// $object->publish('Stage', 'Live');
+	public static function process(StaticSiteContentItem $item, DataObject $object, $parentObject, $duplicateStrategy);
+
 }

@@ -9,7 +9,10 @@ class StaticSiteDataExtension extends DataExtension {
 	);
 
 	function updateCMSFields(FieldList $fields) {
-		if($this->owner->StaticSiteContentSourceID && $this->owner->StaticSiteURL) {
+		if ( $this->owner->is_a('Folder') ) {
+			return;
+		}
+		if($this->owner->StaticSiteContentSourceID && $this->owner->StaticSiteURL && $fields->hasTabSet() ) {
 			$fields->addFieldToTab('Root.Main', new ReadonlyField('StaticSiteURL', 'Imported URL'), 'MenuTitle');
 		}
 		$aliases = $this->StaticSiteURLAliases();

@@ -4,7 +4,7 @@
  *
  * @see {@link StaticSiteFileTransformer}
  */
-class StaticSitePageTransformer implements ExternalContentTransformer {
+class StaticSitePageTransformer extends Object implements ExternalContentTransformer {
 
 	/*
 	 * @var Object
@@ -39,7 +39,15 @@ class StaticSitePageTransformer implements ExternalContentTransformer {
 	 * @throws Exception
 	 */
 	public function transform($item, $parentObject, $duplicateStrategy) {
+		// Force us to consider Stage mode records.  When searching for duplicates, this mode
+		// will return the latest Live mode one - unless there's actually a staged version, which
+		// we also want anyway
+		$origMode = Versioned::get_reading_mode(); 
+		$this->utils->log('Versioned reading mode was: '.$origMode);
+		Versioned::set_reading_mode('Stage.Stage');
+
 		$this->utils->log("START transform for: ",$item->AbsoluteURL, $item->ProcessedMIME);
+		$this->utils->log('Parent object: '.$parentObject->class.':'.$parentObject->ID.' - '.$parentObject->Title);
 
 		$item->runChecks('sitetree');
 		if($item->checkStatus['ok'] !== true) {
@@ -74,6 +82,7 @@ class StaticSitePageTransformer implements ExternalContentTransformer {
 		$schema = $source->getSchemaForURL($item->AbsoluteURL,$item->ProcessedMIME);
 		if(!$schema) {
 			$this->utils->log("Couldn't find an import schema for: ",$item->AbsoluteURL,$item->ProcessedMIME);
+			Versioned::set_reading_mode($origMode);
 			return false;
 		}
 
@@ -81,21 +90,31 @@ class StaticSitePageTransformer implements ExternalContentTransformer {
 
 		if(!$pageType) {
 			$this->utils->log("DataType for migration schema is empty for: ",$item->AbsoluteURL,$item->ProcessedMIME);
+			Versioned::set_reading_mode($origMode);
 			throw new Exception('Pagetype for migration schema is empty!');
 		}
 
 		// Create a page with the appropriate fields
 		$page = new $pageType(array());
-		$existingPage = $pageType::get()->filter('StaticSiteURL',$item->getExternalId())->first();
+		$this->utils->log("Chose $pageType for ",$item->AbsoluteURL,$item->ProcessedMIME);
+
+		$existingPage = $pageType::get()->filter(
+			'StaticSiteURL',
+			$source->BaseUrl . $item->getExternalId()
+		)->first();
+		if ( $existingPage ) {
+			$this->utils->log("Found existing page ".$existingPage->Title.":".$existingPage->ID);
+		} else {
+			$this->utils->log('No existing page for StaticSiteURL:'.$item->getExternalId());
+		}
 
 		if($existingPage && $duplicateStrategy === 'Overwrite') {
 			if(get_class($existingPage) !== $pageType) {
 				$existingPage->ClassName = $pageType;
 				$existingPage->write();
 			}
-			if($existingPage) {
-				$page = $existingPage;
-			}
+			$page = $existingPage;
+ 			$this->utils->log('Overwrote: ',$item->AbsoluteURL,$item->ProcessedMIME);
 		}
 
 		$page->StaticSiteContentSourceID = $source->ID;
@@ -108,14 +127,37 @@ class StaticSitePageTransformer implements ExternalContentTransformer {
 		}
 
 		$page->write();
-		
+		$page->publish('Stage', 'Live');
+		$page->flushCache();
+
+		// Run any processors
+		foreach( $schema->ImportProcessors() as $processorLink ) {
+			$processorName = $processorLink->Name;
+			$this->utils->log("Using $processorName to process page ");
+			call_user_func_array(
+				array(
+					$processorName, 
+					'process'
+				),
+				array(
+					$item,
+					$page,
+					$parentObject,
+					$duplicateStrategy
+				)
+			);
+		}
+
+		$page->write();
+		$page->publish('Stage', 'Live');
+		$page->flushCache();
+
 		$aliases = $item->getSource()->urlList()->getURLAliases($item->AbsoluteURL);
 		if($aliases) {
 			StaticSiteURLAlias::set_object($page, $aliases);
 		}
 
-		$this->utils->log("END transform for: ",$item->AbsoluteURL, $item->ProcessedMIME);
-
+		Versioned::set_reading_mode($origMode);
 		return new StaticSiteTransformResult($page, $item->stageChildren());
 	}
 
@@ -135,7 +177,7 @@ class StaticSitePageTransformer implements ExternalContentTransformer {
 		$importRules = $importSchema->getImportRules();
 
  		// Extract from the remote page based on those rules
-		$contentExtractor = new StaticSiteContentExtractor($item->AbsoluteURL,$item->ProcessedMIME);
+		$contentExtractor = $item->getContentExtractor();
 
 		return $contentExtractor->extractMapAndSelectors($importRules, $item);
 	}

@@ -50,7 +50,6 @@ class StaticSiteFileTransformer implements ExternalContentTransformer {
 	 * @throws Exception
 	 */
 	public function transform($item, $parentObject, $duplicateStrategy) {
-
 		$this->utils->log("START transform for: ",$item->AbsoluteURL, $item->ProcessedMIME);
 
 		$item->runChecks('file');
@@ -76,8 +75,6 @@ class StaticSiteFileTransformer implements ExternalContentTransformer {
 			$contentFields['Filename'] = array('content' => $item->externalId);
 		}
 
-		$source = $item->getSource();
-
 		$schema = $source->getSchemaForURL($item->AbsoluteURL, $item->ProcessedMIME);
 		if(!$schema) {
 			$this->utils->log("Couldn't find an import schema for: ",$item->AbsoluteURL,$item->ProcessedMIME);
@@ -86,34 +83,84 @@ class StaticSiteFileTransformer implements ExternalContentTransformer {
 
 		// @todo need to create the filter on schema on a mime-by-mime basis
 		$dataType = $schema->DataType;
+		$this->utils->log("Matched ".$schema->AppliesTo." - using data type '".$dataType."'");
 
 		if(!$dataType) {
 			$this->utils->log("DataType for migration schema is empty for: ",$item->AbsoluteURL,$item->ProcessedMIME);
 			throw new Exception('DataType for migration schema is empty!');
 		}
 
-		$file = File::get()->filter('StaticSiteURL', $item->AbsoluteURL)->first();
-		if($file && $duplicateStrategy === 'Overwrite') {
-			if(get_class($file) !== $dataType) {
-				$file->ClassName = $dataType;
-			}
-		} elseif($file && $duplicateStrategy === 'Skip') {
-			return false;
+		// Find the folder we're importing into.  Falls back to ASSETS_DIR
+		$rootFolderID = (int) Controller::curr()->getRequest()
+			->requestVar('FileMigrationTarget');
+		if ( $rootFolderID == 0 ) {
+			$rootFolderPath = ASSETS_DIR;
 		} else {
+			$rootFolderPath = rtrim(File::get()->byID($rootFolderID)->getRelativePath(), '/');
+		}
+		$this->utils->log("Root folder: '$rootFolderPath'");
+
+		// Look for an already-imported file via static file URL first
+		$file = File::get()->filter('StaticSiteURL', $item->AbsoluteURL)->first();
+		if ( $file ) {
+			// We found an existing file
+			if( $duplicateStrategy === 'Overwrite' ) {
+				$this->utils->log("Found duplicate file: ".$file->Filename);
+				if( get_class($file) !== $dataType ) {
+					$file->ClassName = $dataType;
+				}
+			} elseif( $duplicateStrategy === 'Skip' ) {
+				$this->utils->log("Skipped duplicate file: ".$file->Filename);
+				return false;
+			}
+		} else {
+			// If not, check for an existing folder with the same name inside the target directory.
+			// This is required for sites that return 404 pages for folders above where their files are kept;
+			// first the crawl will find the filename from other content, then it will scan containing folders
+			// and list their URLs in the url list.  We may already have created the folders when
+			// we imported the file.			
+			$filepath = $rootFolderPath . parse_url($item->AbsoluteURL, PHP_URL_PATH);
+			$folder = Folder::get()->filter('Filename', $filepath);
+			if ( $folder->Count() > 0 ) {
+				// It's an existing folder
+				$this->utils->log("This URL is actually a folder: ".$folder->Filename);
+				return false;
+			}
+
+			// We didn't find a file already imported, and it's not an already-created folder.
+			// Create the file.
+
 			// @todo
 			// - Do we really want to rely on user-input to ascertain the correct container class?
 			// - Should it be detected based on Mime-Type(s) first and if none found, _then_ default to user-input?
 			$file = new $dataType(array());
-			$isImage = $this->mimeProcessor->IsOfImage($item->ProcessedMIME);
-			$path = 'Import' . DIRECTORY_SEPARATOR . ($isImage?'Images':'Documents');
-			$parentFolder = Folder::find_or_make($path);
-			$filename = parse_url($item->AbsoluteURL);
-			$file->Filename = $path . DIRECTORY_SEPARATOR . $filename['path'];
-			$file->Name = $filename['path'];
-			$file->ParentID = $parentFolder->ID;
 		}
 
-		$this->write($file, $item, $source, $contentFields['tmp_path']);
+		$isImage = $this->mimeProcessor->IsOfImage($item->ProcessedMIME);
+		$filename = parse_url($item->AbsoluteURL);
+
+		// Use the original folder path inside our selected folder
+		// Found what we submitted, remove the base assets path ASSETS_DIR (generally 'assets')
+		$path = Controller::join_links(
+			str_replace(ASSETS_DIR, '', $rootFolderPath),
+			dirname($filename['path'])
+		);
+		$path = trim($path, '/');
+		$parentFolder = Folder::find_or_make($path);
+		$this->utils->log("Created folder: '$path'");
+
+		$file->Filename = $path . DIRECTORY_SEPARATOR . basename($filename['path']);
+		$file->Name = basename($filename['path']);
+		$file->ParentID = $parentFolder->ID;
+
+		$this->utils->log("Wrote file: '".$file->Filename."'");
+
+		try {
+			$this->write($file, $item, $source, $contentFields['tmp_path']);
+		} catch ( Exception $e ) {
+			// guzzle can throw 404 exceptions
+			return false;
+		}
 
 		$this->utils->log("END transform for: ",$item->AbsoluteURL, $item->ProcessedMIME);
 

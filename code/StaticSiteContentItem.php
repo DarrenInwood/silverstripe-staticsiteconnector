@@ -15,6 +15,11 @@ class StaticSiteContentItem extends ExternalContentItem {
 	);
 
 	/**
+	 * Stores the content extractor used to munge this item's content
+	 */
+	protected $contentExtractor = null;
+
+	/**
 	 * Set this by using the yml config system
 	 *
 	 * Example:
@@ -121,6 +126,14 @@ class StaticSiteContentItem extends ExternalContentItem {
 		Requirements::css('staticsiteconnector/css/StaticSiteContentItem.css');
 
 		return $fields;
+	}
+
+	// Must have called init() first, sadly
+	public function getContentExtractor() {
+		if ( !$this->contentExtractor ) {
+			$this->contentExtractor = new StaticSiteContentExtractor($this->AbsoluteURL,$this->ProcessedMIME);
+		}
+		return $this->contentExtractor;
 	}
 
 	/*

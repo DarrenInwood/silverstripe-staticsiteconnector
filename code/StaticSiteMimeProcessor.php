@@ -72,6 +72,7 @@ class StaticSiteMimeProcessor extends Object {
 	 */
 	public static function ss_type_to_suffix_map($SSType = null) {
 		$mimeCategories = singleton('File')->config()->app_categories;
+
 		/*
 		 * Imported files and images are going to passed through to Upload#load() and checked aginst File::$app_categories so use this method to
 		 * filter in calls to DataObject#validate()
@@ -80,7 +81,9 @@ class StaticSiteMimeProcessor extends Object {
 		// File contains values of $mimeKeysForSiteTree which we don't want
 		$mimeKeysForFile = array_merge(
 			array_splice($mimeCategories['doc'],14,2),
-			array_splice($mimeCategories['doc'],0,11)
+			array_splice($mimeCategories['doc'],0,11),
+			$mimeCategories['mov'],
+			$mimeCategories['audio']
 		);
 		$mimeKeysForImage = $mimeCategories['image'];
 		$map = array(

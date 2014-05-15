@@ -140,6 +140,9 @@ class StaticSiteContentExtractor extends Object {
 				break;
 			}
 		}
+
+		$this->extend('onAfterExtract', $item, $output, $this->utils);
+
 		return $output;
 	}
 
@@ -158,12 +161,15 @@ class StaticSiteContentExtractor extends Object {
 
 		$elements = $this->phpQuery[$cssSelector];
 		// @todo temporary workaround for File objects
-		if(!$elements) {
+		if(!$elements || $elements->size() == 0) {
 			return '';
 		}
 
 		// just return the inner HTML for this node
 		if(!$outerHTML || !$attribute) {
+			if ( $attribute ) {
+				return trim($elements->eq(0)->attr($attribute));
+			}
 			return trim($elements->html());
 		}
 
@@ -197,12 +203,22 @@ class StaticSiteContentExtractor extends Object {
 			if(!trim($excludeSelector)) {
 				continue;
 			}
+/* Old string munging method
 			$element = $this->phpQuery[$parentSelector.' '.$excludeSelector];
-			if($element) {
-				$remove = $element->htmlOuter();
-				$content = str_replace($remove, '', $content);
-				$this->utils->log(' - Excluded content from "'.$parentSelector.' '.$excludeSelector.'"');
+			if($element->size() > 0) {
+				foreach($element as $el) {
+					$remove = $el->ownerDocument->saveXML($el);
+					$content = str_replace($remove, '', $content);
+					$this->utils->log(' - Excluded '.$remove.' via "'.$parentSelector.' '.$excludeSelector.'"');
+				}
 			}
+*/
+			// New phpQuery method
+			$content = phpQuery::newDocument($content);
+			$delete = $content->find(trim($excludeSelector));
+			$delete->remove();
+			$this->utils->log(' - Removed '.$delete->size().' elements for "'.trim($excludeSelector).'"');
+			$content = $content->htmlOuter();
 		}
 		return ($content);
 	}
@@ -228,6 +244,10 @@ class StaticSiteContentExtractor extends Object {
 	 */
 	public function getContent() {
 		return $this->content;
+	}
+
+	public function getPhpQuery() {
+		return $this->phpQuery;
 	}
 
 	/**
@@ -307,13 +327,21 @@ class StaticSiteContentExtractor extends Object {
 		$ch        = curl_init();
 		$timeout   = 10;
 		$ssInfo = new SapphireInfo;
-		$useragent = 'SilverStripe/' . $ssInfo->version();
+
+		// If we use a weird useragent, some sites will return mobile versions.
+		// We pretend to be Chrome on Mac.
+		$useragent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_5) '.
+			'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1700.107 '.
+			'Safari/537.36';
 
 		curl_setopt($ch, CURLOPT_URL, $url);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
 		curl_setopt($ch, CURLOPT_USERAGENT, $useragent);
 		curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-		curl_setopt($ch, CURLOPT_HEADER, 1);
+
+		// Not sure why heade4rs were set as they mess up phpQuery
+		//curl_setopt($ch, CURLOPT_HEADER, 1);
+		curl_setopt($ch, CURLOPT_HEADER, 0);
 		curl_setopt($ch, CURLOPT_TIMEOUT, 120);
 
 		if($headers) curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);

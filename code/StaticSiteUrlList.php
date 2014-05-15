@@ -314,7 +314,7 @@ class StaticSiteUrlList {
 	 * @param bool $verbose
 	 * @return \StaticSiteCrawler
 	 */
-	public function crawl($limit=false, $verbose=false) {
+	public function crawl($limit=false, $verbose=true) {
 		increase_time_limit_to(3600);
 
 		if(!is_dir($this->cacheDir)) {
@@ -338,7 +338,7 @@ class StaticSiteUrlList {
 			if(file_exists($this->cacheDir . 'urls')) {
 				$this->urls = unserialize(file_get_contents($this->cacheDir . 'urls'));
 			} else {
-				$this->urls = array('regular' => array(), 'inferred' => array());
+				$this->urls = array('regular' => array(), 'inferred' => array(), 'aliases' => array());
 			}
 
 			$crawlerID = file_get_contents($this->cacheDir.'crawlerid');
@@ -346,11 +346,20 @@ class StaticSiteUrlList {
 		} else {
 			$crawlerID = $crawler->getCrawlerId();
 			file_put_contents($this->cacheDir.'/crawlerid', $crawlerID);
-			$this->urls = array('regular' => array(), 'inferred' => array());
+			$this->urls = array('regular' => array(), 'inferred' => array(), 'aliases' => array());
 		}
 
 		$crawler->setURL($this->baseURL);
 		$crawler->go();
+
+		$report = $crawler->getProcessReport();
+
+		$lb = "\n";
+		echo "Summary:".$lb;
+		echo "Links followed: ".$report->links_followed.$lb;
+		echo "Documents received: ".$report->files_received.$lb;
+		echo "Bytes received: ".$report->bytes_received." bytes".$lb;
+		echo "Process runtime: ".$report->process_runtime." sec".$lb;
 
 		unlink($this->cacheDir.'crawlerid');
 
@@ -397,7 +406,7 @@ class StaticSiteUrlList {
 	public function relativiseUrl($url) {
 		$migrationURLParts = parse_url($this->baseURL);
 		$urlParts = parse_url($url);
-		
+
 		if($urlParts['host'] !== $migrationURLParts['host']) {
 			return null;
 		}
@@ -721,7 +730,7 @@ class StaticSiteCrawler extends PHPCrawler {
 	 *
 	 * @var bool
 	 */
-	protected $verbose = false;
+	protected $verbose = true;
 
 	/**
 	 * Set some specific options for this instance of the crawler.
@@ -730,7 +739,7 @@ class StaticSiteCrawler extends PHPCrawler {
 	 * @param int $limit
 	 * @param bool $verbose
 	 */
-	public function __construct(StaticSiteUrlList $urlList, $limit=false, $verbose=false) {
+	public function __construct(StaticSiteUrlList $urlList, $limit=false, $verbose=true) {
 		parent::__construct();
 		$this->urlList = $urlList;
 		$this->verbose = $verbose;
