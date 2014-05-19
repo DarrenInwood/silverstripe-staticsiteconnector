@@ -247,6 +247,9 @@ class StaticSiteContentExtractor extends Object {
 	}
 
 	public function getPhpQuery() {
+		if(!$this->phpQuery) {
+			$this->fetchContent();
+		}
 		return $this->phpQuery;
 	}
 

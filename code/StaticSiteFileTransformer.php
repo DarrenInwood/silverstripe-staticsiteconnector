@@ -75,7 +75,7 @@ class StaticSiteFileTransformer implements ExternalContentTransformer {
 			$contentFields['Filename'] = array('content' => $item->externalId);
 		}
 
-		$schema = $source->getSchemaForURL($item->AbsoluteURL, $item->ProcessedMIME);
+		$schema = $source->getSchemaForItem($item);
 		if(!$schema) {
 			$this->utils->log("Couldn't find an import schema for: ",$item->AbsoluteURL,$item->ProcessedMIME);
 			return false;
@@ -196,7 +196,7 @@ class StaticSiteFileTransformer implements ExternalContentTransformer {
 	 */
 	public function getContentFieldsAndSelectors($item) {
 		// Get the import rules from the content source
-		$importSchema = $item->getSource()->getSchemaForURL($item->AbsoluteURL,$item->ProcessedMIME);
+		$importSchema = $item->getSource()->getSchemaForItem($item);
 		if(!$importSchema) {
 			$this->utils->log("Couldn't find an import schema for ",$item->AbsoluteURL,$item->ProcessedMIME,'WARNING');
 			return null;

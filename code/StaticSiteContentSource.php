@@ -182,13 +182,16 @@ class StaticSiteContentSource extends ExternalContentSource {
 	}
 
 	/*
-	 * Fetch an appropriate schema for a given URL and/or Mime-Type. If no matches are found, boolean false is returned
+	 * Fetch an appropriate schema for a given item. 
+	 * Takes into account URL, MIME type, and HTML content vs CSS selectors.
+	 * If no matches are found, boolean false is returned.
 	 *
-	 * @param string $absoluteURL
-	 * @param string $mimeType (Optional)
+	 * @param string $item (Optional) The HTML content of the item to import.  If present, any CSS Filter rules will be applied.
 	 * @return mixed $schema or boolean false if no schema matches are found
 	 */
-	public function getSchemaForURL($absoluteURL, $mimeType = null) {
+	public function getSchemaForItem($item) {
+		$absoluteURL = $item->AbsoluteURL;
+		$mimeType = $item->ProcessedMIME;
 		$mimeType = StaticSiteMimeProcessor::cleanse($mimeType);
 		foreach($this->Schemas() as $schema) {
 			$schemaCanParseURL = $this->schemaCanParseURL($schema, $absoluteURL);
@@ -199,6 +202,11 @@ class StaticSiteContentSource extends ExternalContentSource {
 				if($mimeType && $schemaMimeTypes && (!in_array($mimeType, $schemaMimeTypes))) {
 					continue;
 				}
+
+				if(!$schema->canParseItemHTML($item)) {
+					continue;
+				}
+
 				return $schema;
 			}
 		}
@@ -304,19 +312,29 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 	 */
 	public static $default_applies_to = '.*';
 
+	/**
+	 * Default
+	 *
+	 * @var string
+	 */
+	public static $default_css_filter = 'body';
+
 	public static $db = array(
 		"DataType" => "Varchar", // classname
 		"Order" => "Int",
 		"AppliesTo" => "Varchar(255)", // regex
+		"CssFilter" => "Varchar(255)", // regex
 		"MimeTypes" => "Text"
 	);
 	public static $summary_fields = array(
 		"AppliesTo",
+		"CssFilter",
 		"DataType",
 		"Order"
 	);
 	public static $field_labels = array(
 		"AppliesTo" => "URLs applied to",
+		"CssFilter" => "CSS filter",
 		"DataType" => "Data type",
 		"Order" => "Priority",
 		"MimeTypes"	=> "Applies rule to these Mime-types"
@@ -345,10 +363,28 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 		$fields = parent::getCMSFields();
 		$fields->removeFieldFromTab('Root.Main', 'DataType');
 		$fields->removeByName('ContentSourceID');
+
+		$fields->dataFieldByName('Order')->setDescription(
+			'Smaller numbers are run first, so give your specific-case schemas lower '.
+			'numbers and your catch-all cases higher numbers. The first schema to match '.
+			'each page will be used.'
+		);
+
+		$fields->dataFieldByName('AppliesTo')->setDescription(
+			'Supports regular expressions. Evaluated as "@^VALUE@" against the entire external site URL, so '.
+			'don\'t start with "^"" but do include "http://". Remember to allow for URL nesting.'
+		);
+
+		$fields->dataFieldByName('CssFilter')->setDescription(
+			'CSS selector to test for. The rule will match if the page has at least one '.
+			'element matching the selector.  Leave blank to always match.'
+		);
+
 		$dataObjects = ClassInfo::subclassesFor('DataObject');
 		array_shift($dataObjects);
 		natcasesort($dataObjects);
 		$fields->addFieldToTab('Root.Main', new DropdownField('DataType', 'DataType', $dataObjects));
+
 		$mimes = new TextareaField('MimeTypes', 'Mime-types');
 		$mimes->setRows(3);
 		$mimes->setDescription('Be sure to pick a MIME-type that the DataType supports. Examples of valid entries are e.g text/html, image/png or image/jpeg separated by a newline.');
@@ -368,20 +404,25 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 			$addNewButton = new GridFieldAddNewButton('after');
 			$addNewButton->setButtonName("Add Rule");
 			$importRules->getConfig()->addComponent($addNewButton);
-
-
 			$fields->addFieldToTab('Root.Main', $importRules);
 		}
 
 		$importProcessors = $fields->dataFieldByName('ImportProcessors');
-		$importProcessors->getConfig()->removeComponentsByType('GridFieldAddExistingAutocompleter');
-		$importProcessors->getConfig()->removeComponentsByType('GridFieldAddNewButton');
-		$addNewButton = new GridFieldAddNewButton('after');
-		$addNewButton->setButtonName("Add Processor");
-		$importProcessors->getConfig()->addComponent($addNewButton);
-		$fields->removeFieldFromTab('Root', 'ImportProcessors');
-		$fields->addFieldToTab('Root.Main', $importProcessors);
+		if ( $importProcessors ) {
+			$importProcessors->getConfig()->removeComponentsByType('GridFieldAddExistingAutocompleter');
+			$importProcessors->getConfig()->removeComponentsByType('GridFieldAddNewButton');
+			$addNewButton = new GridFieldAddNewButton('after');
+			$addNewButton->setButtonName("Add Processor");
+			$importProcessors->getConfig()->addComponent($addNewButton);
+			$fields->removeFieldFromTab('Root', 'ImportProcessors');
+			$fields->addFieldToTab('Root.Main', $importProcessors);
+			if ( class_exists('GridFieldSortableRows') ) {
+				$importProcessors->getConfig()->addComponent(new GridFieldSortableRows('Order'));
+			} else if ( class_exists('GridFieldOrderableRows') ) {
+				$importProcessors->getConfig()->addComponent(new GridFieldOrderableRows('Order'));
+			}
 
+		}
 
 		return $fields;
 	}
@@ -393,6 +434,7 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 				$defaultSchema = new StaticSiteContentSource_ImportSchema;
 				$defaultSchema->Order = 1000000;
 				$defaultSchema->AppliesTo = self::$default_applies_to;
+				$defaultSchema->CssFilter = self::$default_css_filter;
 				$defaultSchema->DataType = "Page";
 				$defaultSchema->ContentSourceID = $source->ID;
 				$defaultSchema->MimeTypes = "text/html";
@@ -482,6 +524,26 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 		}
 		return true;
 	}
+
+	/**
+	 * Returns whether this Schema will accept a given content item based on
+	 * the item's HTML content and the Schema's CSS Filter rule.
+	 * $item (StaticSiteContentItem)
+	 */
+	public function canParseItemHTML($item) {
+		if (!strlen($this->CssFilter)) {
+			return true;
+		}
+		$results = $item->getContentExtractor()->getPhpQuery()->find(
+			$this->CssFilter
+		);
+		if ($results->length() > 0) {
+			return true;
+		}
+		return false;
+	}
+
+
 }
 
 /**
@@ -494,7 +556,7 @@ class StaticSiteContentSource_ImportRule extends DataObject {
 		"ExcludeCSSSelector" => "Text",
 		"Attribute" => "Varchar",
 		"PlainText" => "Boolean",
-		"OuterHTML" => "Boolean"
+		"OuterHTML" => "Boolean",
 	);
 
 	public static $summary_fields = array(
@@ -548,6 +610,8 @@ class StaticSiteContentSource_ImportRule extends DataObject {
 			$fieldName->setDescription('Save this rule before being able to add a field name');
 		}
 
+		$fields->removeFieldByName('Order');
+
 		return $fields;
 	}
 }
@@ -560,11 +624,14 @@ class StaticSiteContentSource_ImportProcessor extends DataObject {
 
 	private static $db = array(
 		'Name' => 'Text',
+		'Order' => 'Int',
 	);
 
 	private static $has_one = array(
 		"Schema" => "StaticSiteContentSource_ImportSchema",
 	);
+
+	private static $default_sort = 'Order';
 
 	public function getCMSFields() {
 		$fields = new FieldList();
@@ -577,6 +644,8 @@ class StaticSiteContentSource_ImportProcessor extends DataObject {
 		$fields->push(
 			new DropdownField('Name', 'Select a processor to apply:', $map)
 		);		
+
+		$fields->removeFieldByName('Order');
 
 		return $fields;
 	}

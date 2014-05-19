@@ -79,7 +79,7 @@ class StaticSitePageTransformer extends Object implements ExternalContentTransfo
 			$contentFields['URLSegment'] = array('content' => $urlSegment);
 		}
 
-		$schema = $source->getSchemaForURL($item->AbsoluteURL,$item->ProcessedMIME);
+		$schema = $source->getSchemaForItem($item);
 		if(!$schema) {
 			$this->utils->log("Couldn't find an import schema for: ",$item->AbsoluteURL,$item->ProcessedMIME);
 			Versioned::set_reading_mode($origMode);
@@ -169,7 +169,7 @@ class StaticSitePageTransformer extends Object implements ExternalContentTransfo
 	 */
 	public function getContentFieldsAndSelectors($item) {
 		// Get the import rules from the content source
-		$importSchema = $item->getSource()->getSchemaForURL($item->AbsoluteURL,$item->ProcessedMIME);
+		$importSchema = $item->getSource()->getSchemaForItem($item);
 		if(!$importSchema) {
 			return null;
 			throw new LogicException("Couldn't find an import schema for URL: {$item->AbsoluteURL} and Mime: {$item->ProcessedMIME}");
