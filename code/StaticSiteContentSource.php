@@ -7,6 +7,7 @@ class StaticSiteContentSource extends ExternalContentSource {
 		'UrlProcessor' => 'Varchar(255)',
 		'ExtraCrawlUrls' => 'Text',
 		'UrlExcludePatterns' => 'Text',
+		'UrlExcludeCss' => 'Text',
 	);
 
 	public static $has_many = array(
@@ -125,8 +126,11 @@ class StaticSiteContentSource extends ExternalContentSource {
 			->setDescription("Add URLs that are not reachable through content scraping, eg: '/about/team'. One per line")
 			->setTitle('Additional URLs');
 		$fields->dataFieldByName("UrlExcludePatterns")
-			->setDescription("URLs that should be excluded (support regular expression). eg: '/about/.*'. One per URL")
+			->setDescription("URLs that should be excluded (support regular expression). eg: '/about/.*'. One per line")
 			->setTitle('Excluded URLs');
+		$fields->dataFieldByName("UrlExcludeCss")
+			->setDescription("CSS selectors that indicate a page should be ignored. Useful for sites that don't send 404 HTTP status codes for Not Found pages. One selector per line")
+			->setTitle('Excluded CSS');
 
 		return $fields;
 	}
@@ -199,7 +203,7 @@ class StaticSiteContentSource extends ExternalContentSource {
 			array_push($schemaMimeTypes, StaticSiteUrlList::$undefined_mime_type);
 			if($schemaCanParseURL) {
 
-				if($mimeType && $schemaMimeTypes && (!in_array($mimeType, $schemaMimeTypes))) {
+				if($mimeType && $schema->MimeTypes && $schemaMimeTypes && (!in_array($mimeType, $schemaMimeTypes))) {
 					continue;
 				}
 
@@ -493,6 +497,9 @@ class StaticSiteContentSource_ImportSchema extends DataObject {
 	 * @return mixed boolean|string Boolean true if all is OK, otherwise the invalid mimeType to be shown in the CMS UI
 	 */
 	public function validateMimes() {
+		if (!strlen($this->MimeTypes)) {
+			return true; // no values is OK.
+		}
 		$selectedMimes = StaticSiteMimeProcessor::get_mimetypes_from_text($this->MimeTypes);
 		$dt = $this->DataType ? $this->DataType : $_POST['DataType']; // @todo
 		if(!$dt) {
@@ -610,69 +617,8 @@ class StaticSiteContentSource_ImportRule extends DataObject {
 			$fieldName->setDescription('Save this rule before being able to add a field name');
 		}
 
-		$fields->removeFieldByName('Order');
+		$fields->removeByName('Order');
 
 		return $fields;
 	}
-}
-
-
-/**
- * Allows adding PHP processor functionality to an import
- */
-class StaticSiteContentSource_ImportProcessor extends DataObject {
-
-	private static $db = array(
-		'Name' => 'Text',
-		'Order' => 'Int',
-	);
-
-	private static $has_one = array(
-		"Schema" => "StaticSiteContentSource_ImportSchema",
-	);
-
-	private static $default_sort = 'Order';
-
-	public function getCMSFields() {
-		$fields = new FieldList();
-
-		$map = array();
-		foreach( ClassInfo::implementorsOf('StaticSiteContentSource_ImportProcess') as $class ) {
-			$map[$class] = $class;
-		}
-
-		$fields->push(
-			new DropdownField('Name', 'Select a processor to apply:', $map)
-		);		
-
-		$fields->removeFieldByName('Order');
-
-		return $fields;
-	}
-
-}
-
-/**
- * The interface used to process an item.
- * Processing is run after the import rules have completed.
- * The $item has handy function getContentExtractor() which in turn has handy function getContent()
- * which will return the content of the HTML page; 
- */
-interface StaticSiteContentSource_ImportProcess {
-
-	// Inside your function, you can use eg:
-	// $elements = $item->getContentExtractor()->getPhpQuery()->find('.css-selector');
-	// // I find it easier to use for and eq() than foreach, as the elements remain phpQuery objects
-	// for ( $i = 0; $i < $elements->size(); $i++ ) {
-	//     $element = $elements->eq($i);
-	//     $content = $object->Content;
-	//     $content = phpQuery::newDocument('<div id="munged-content">'.$content.'</div>');
-	//     // Note that we already replaced all preceding ones, so it's always eq(0)
-	//     $content->find('#'.$element->attr('id'))->eq(0)->replaceWith("\n[shortcode id=".$element->attr('id')."]\n");
-	//     $object->Content = $content->find('#munged-content')->html();
-	// }
-	// $object->write();
-	// $object->publish('Stage', 'Live');
-	public static function process(StaticSiteContentItem $item, DataObject $object, $parentObject, $duplicateStrategy);
-
 }

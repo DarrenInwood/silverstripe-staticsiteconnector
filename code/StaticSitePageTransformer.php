@@ -60,6 +60,17 @@ class StaticSitePageTransformer extends Object implements ExternalContentTransfo
 		// Cleanup StaticSiteURLs
 		//$this->utils->resetStaticSiteURLs($item->AbsoluteURL, $source->ID, 'SiteTree');
 
+		// Check to see if we need to exclude this for CSS reasons
+		$excludeCssLines = explode("\n", $source->UrlExcludeCss);
+		$content = $item->getContentExtractor()->getPhpQuery();
+		foreach( $excludeCssLines as $excludeCss ) {
+			if ( $content->find($excludeCss)->length() > 0 ) {
+				$this->utils->log("Excluded via CSS ".$excludeCss,$item->AbsoluteURL,$item->ProcessedMIME);
+				Versioned::set_reading_mode($origMode);
+				return false;
+			}
+		}
+
 		// Sleep for 100ms to reduce load on the remote server
 		usleep(100*1000);
 
@@ -98,14 +109,16 @@ class StaticSitePageTransformer extends Object implements ExternalContentTransfo
 		$page = new $pageType(array());
 		$this->utils->log("Chose $pageType for ",$item->AbsoluteURL,$item->ProcessedMIME);
 
-		$existingPage = $pageType::get()->filter(
-			'StaticSiteURL',
-			$source->BaseUrl . $item->getExternalId()
-		)->first();
+		// Try without leading slash
+		$staticSiteURL = Controller::join_links(
+			$source->BaseUrl,
+			$item->ProcessedURL
+		);
+		$existingPage = SiteTree::get()->filter('StaticSiteURL', $staticSiteURL)->First();
 		if ( $existingPage ) {
-			$this->utils->log("Found existing page ".$existingPage->Title.":".$existingPage->ID);
+			$this->utils->log("Found existing page ".$existingPage->Title.":".$existingPage->ID.' getExternalId:'.$item->getExternalId());
 		} else {
-			$this->utils->log('No existing page for StaticSiteURL:'.$item->getExternalId());
+			$this->utils->log('No existing page for StaticSiteURL:'.$item->AbsoluteURL.' getExternalId:'.$item->getExternalId());
 		}
 
 		if($existingPage && $duplicateStrategy === 'Overwrite') {
@@ -118,7 +131,7 @@ class StaticSitePageTransformer extends Object implements ExternalContentTransfo
 		}
 
 		$page->StaticSiteContentSourceID = $source->ID;
-		$page->StaticSiteURL = $item->AbsoluteURL;
+		$page->StaticSiteURL = $staticSiteURL;
 
 		$page->ParentID = $parentObject ? $parentObject->ID : 0;
 
